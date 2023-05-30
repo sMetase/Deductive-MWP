@@ -32,8 +32,8 @@ class_name_2_quant_list = {
     'hfl/chinese-roberta-wwm-ext': ['<', 'q', '##uan', '##t', '>'],
 }
 
-UniFeature = collections.namedtuple('UniFeature', 'input_ids attention_mask token_type_ids variable_indexs_start variable_indexs_end num_variables variable_index_mask labels label_height_mask')
-UniFeature.__new__.__defaults__ = (None,) * 7
+UniFeature = collections.namedtuple('UniFeature', 'input_ids attention_mask token_type_ids variable_indexs_start variable_indexs_end num_variables variable_index_mask')
+UniFeature.__new__.__defaults__ = (None,) * 5
 
 class UniversalDataset(Dataset):
 
@@ -78,7 +78,7 @@ class UniversalDataset(Dataset):
         found_duplication_inst_num = 0
         filter_step_count = 0
         for obj in tqdm(data, desc='Tokenization', total=len(data)):
-            mapped_text = obj["text"]
+            mapped_text = obj["ori_text"]
             sent_len = len(mapped_text.split())
             ## replace the variable with <quant>
             for k in range(ord('a'), ord('a') + 26):
@@ -120,48 +120,13 @@ class UniversalDataset(Dataset):
                 obj['type_str'] = "no detected variable"
                 continue
             var_mask = [1] * num_variable
-            if len(obj["equation_layer"])  == 0:
-                filter_type_count["empty equation in the data"]  += 1
-                obj['type_str'] = "empty eqution"
-                continue
+            # if len(obj["equation_layer"])  == 0:
+            #     filter_type_count["empty equation in the data"]  += 1
+            #     obj['type_str'] = "empty eqution"
+            #     continue
 
-            ##check duplication for (non-duplicated dataset, i.e., no same equation)
-            if "nodup" in file:
-                eq_set = set()
-                for equation in obj["equation_layer"]:
-                    eq_set.add(' '.join(equation))
-                try:
-                    assert len(eq_set) == len(obj["equation_layer"])
-                except:
-                    found_duplication_inst_num += 1
 
-            labels = self.get_label_ids_incremental(obj["equation_layer"], add_replacement=True)
-
-            if not labels:
-                filter_type_count["cannot obtain the label sequence"] += 1
-                obj['type_str'] = "illegal"
-                continue
-            # compute_value(labels, obj["num_list"])
-
-            if len(labels) > self.data_max_height:
-                filter_type_count[f"larger than the max height {self.data_max_height}"] += 1
-                continue
-            for left, right, _, _ in labels:
-                assert left <= right
-
-            if isinstance(labels, str):
-                filter_type_count[f"index error for labels"] += 1
-                obj['type_str'] = "illegal"
-                continue
-            try:
-                res, _ = compute_value_for_incremental_equations(labels, obj["num_list"], self.constant_num, uni_labels=self.uni_labels, constant_values=self.constant_values)
-            except:
-                # print("answer calculate exception")
-                filter_type_count[f"answer_calculate_exception"] += 1
-                obj['type_str'] = "illegal"
-                continue
-
-            diff = res - float(obj["answer"])
+            # diff = res - float(obj["answer"])
             try:
                 if float(obj["answer"]) > 1000000:
                     assert math.fabs(diff) < 200
@@ -179,20 +144,8 @@ class UniversalDataset(Dataset):
                         continue
                     else:
                         pass
-            if filtered_steps is not None:
-                if len(labels) not in filtered_steps:
-                    filter_step_count += 1
-                    continue
 
-            label_height_mask = [1] * len(labels)
-            num_step_count[len(labels)] += 1
-            max_num_steps = max(max_num_steps, len(labels))
-            ## check label all valid
-            for label in labels:
-                assert all([label[i] >= 0 for i in range(4)])
-            equation_layer_num += len(obj["equation_layer"])
-            equation_layer_num_count[len(obj["equation_layer"])] += 1
-            sent_len_all += sent_len
+       
             var_num_all += len(obj["num_list"])
             var_num_count[len(obj["num_list"])] += 1
             self._features.append(
@@ -202,9 +155,7 @@ class UniversalDataset(Dataset):
                            variable_indexs_start=var_starts,
                            variable_indexs_end=var_ends,
                            num_variables=num_variable,
-                           variable_index_mask=var_mask,
-                           labels = labels,
-                           label_height_mask=label_height_mask)
+                           variable_index_mask=var_mask)
             )
             self.insts.append(obj)
         logger.info(f", total number instances: {len(self._features)} (before filter: {len(data)}), max num steps: {max_num_steps}")
@@ -214,13 +165,6 @@ class UniversalDataset(Dataset):
         assert self.number_instances_remove == len(data) - len(self._features)
         if found_duplication_inst_num:
             logger.warning(f"[WARNING] find duplication num: {found_duplication_inst_num} (not removed)")
-        logger.debug(f"filter step count: {filtered_steps}")
-        logger.info(num_step_count)
-        avg_eq_num = equation_layer_num * 1.0/ len(self._features)
-        logger.debug(f"average operation number: {avg_eq_num}, total: {equation_layer_num}, counter: {equation_layer_num_count}")
-        avg_sent_len = sent_len_all * 1.0 / len(self._features)
-        logger.debug(f"average sentence length: {avg_sent_len}, total: {sent_len_all}")
-        logger.debug(f"variable number avg: {var_num_all * 1.0 / len(self._features)}, total: {var_num_all}, counter:{var_num_count}")
 
     def __len__(self) -> int:
         return len(self._features)
