@@ -33,7 +33,7 @@ class_name_2_quant_list = {
 }
 
 UniFeature = collections.namedtuple('UniFeature', 'input_ids attention_mask token_type_ids variable_indexs_start variable_indexs_end num_variables variable_index_mask')
-UniFeature.__new__.__defaults__ = (None,) * 5
+UniFeature.__new__.__defaults__ = (None,) * 7
 
 class UniversalDataset(Dataset):
 
@@ -127,23 +127,23 @@ class UniversalDataset(Dataset):
 
 
             # diff = res - float(obj["answer"])
-            try:
-                if float(obj["answer"]) > 1000000:
-                    assert math.fabs(diff) < 200
-                else:
-                    assert math.fabs(diff) < 1
-            except:
-                # traceback.print_exc()
-                obj['type_str'] = "illegal"
-                if "test" in file or "valid" in file:
-                    filter_type_count[f"answer not equal"] += 1
-                    continue
-                else:
-                    if "MathQA" in file:
-                        filter_type_count[f"answer not equal"] += 1
-                        continue
-                    else:
-                        pass
+            # try:
+            #     if float(obj["answer"]) > 1000000:
+            #         assert math.fabs(diff) < 200
+            #     else:
+            #         assert math.fabs(diff) < 1
+            # except:
+            #     # traceback.print_exc()
+            #     obj['type_str'] = "illegal"
+            #     if "test" in file or "valid" in file:
+            #         filter_type_count[f"answer not equal"] += 1
+            #         continue
+            #     else:
+            #         if "MathQA" in file:
+            #             filter_type_count[f"answer not equal"] += 1
+            #             continue
+            #         else:
+            #             pass
 
        
             var_num_all += len(obj["num_list"])
@@ -267,7 +267,7 @@ class UniversalDataset(Dataset):
 
         max_wordpiece_length = max([len(feature.input_ids)  for feature in batch])
         max_num_variable = max([feature.num_variables  for feature in batch])
-        max_height = max([len(feature.labels) for feature in batch])
+
         padding_value = [0,0,0,0]
         for i, feature in enumerate(batch):
             padding_length = max_wordpiece_length - len(feature.input_ids)
@@ -279,9 +279,7 @@ class UniversalDataset(Dataset):
             var_ends = feature.variable_indexs_end + [0] * padded_variable_idx_len
             variable_index_mask = feature.variable_index_mask + [0] * padded_variable_idx_len
 
-            padded_height = max_height - len(feature.labels)
-            labels = feature.labels + [padding_value]* padded_height ## useless, because we have height mask
-            label_height_mask = feature.label_height_mask + [0] * padded_height
+
 
 
             batch[i] = UniFeature(input_ids=np.asarray(input_ids),
@@ -290,9 +288,7 @@ class UniversalDataset(Dataset):
                                  variable_indexs_start=np.asarray(var_starts),
                                  variable_indexs_end=np.asarray(var_ends),
                                  num_variables=np.asarray(feature.num_variables),
-                                 variable_index_mask=np.asarray(variable_index_mask),
-                                 labels =np.asarray(labels),
-                                  label_height_mask=np.asarray(label_height_mask))
+                                 variable_index_mask=np.asarray(variable_index_mask))
         results = UniFeature(*(default_collate(samples) for samples in zip(*batch)))
         return results
 

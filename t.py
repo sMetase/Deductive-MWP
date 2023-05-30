@@ -225,7 +225,6 @@ def evaluate(valid_dataloader: DataLoader, model: nn.Module, dev: torch.device, 
                              variable_indexs_end=feature.variable_indexs_end.to(dev),
                              num_variables = feature.num_variables.to(dev),
                              variable_index_mask= feature.variable_index_mask.to(dev),
-                             labels=feature.labels.to(dev), label_height_mask= feature.label_height_mask.to(dev),
                              return_dict=True, is_eval=True).all_logits
                 batched_prediction = get_batched_prediction_consider_multiple_m0(feature=feature, all_logits=all_logits, constant_num=constant_num)
                 for b, inst_predictions in enumerate(batched_prediction):
@@ -234,16 +233,16 @@ def evaluate(valid_dataloader: DataLoader, model: nn.Module, dev: torch.device, 
                         if stop_id == 1:
                             batched_prediction[b] = batched_prediction[b][:(p+1)]
                             break
-                batched_labels = feature.labels.cpu().numpy().tolist()
-                for b, inst_labels in enumerate(batched_labels):
-                    for p, label_step in enumerate(inst_labels):
-                        left, right, op_id, stop_id = label_step
-                        if stop_id == 1:
-                            batched_labels[b] = batched_labels[b][:(p+1)]
-                            break
+
+                # for b, inst_labels in enumerate(batched_labels):
+                #     for p, label_step in enumerate(inst_labels):
+                #         left, right, op_id, stop_id = label_step
+                #         if stop_id == 1:
+                #             batched_labels[b] = batched_labels[b][:(p+1)]
+                #             break
 
                 predictions.extend(batched_prediction)
-                labels.extend(batched_labels)
+
     corr = 0
     num_label_step_corr = Counter()
     num_label_step_total = Counter()
