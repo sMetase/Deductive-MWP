@@ -12,7 +12,7 @@ import os
 import random
 from src.model.universal_model import UniversalModel, UniversalModel_Roberta
 from collections import Counter
-from src.eval.utils import is_value_correct
+from src.eval.utils import compute_value_for_incremental_equations, compute
 from typing import List, Tuple
 import logging
 from transformers import set_seed
@@ -43,16 +43,16 @@ class_name_2_model = {
 
 def parse_arguments(parser:argparse.ArgumentParser):
     # data Hyperparameters
-    parser.add_argument('--device', type=str, default="cpu", choices=['cpu', 'cuda:0', 'cuda:1', 'cuda:2', 'cuda:3', 'cuda:4', 'cuda:5', 'cuda:6', 'cuda:7'], help="GPU/CPU devices")
+    parser.add_argument('--device', type=str, default="cuda:0", choices=['cpu', 'cuda:0', 'cuda:1', 'cuda:2', 'cuda:3', 'cuda:4', 'cuda:5', 'cuda:6', 'cuda:7'], help="GPU/CPU devices")
     parser.add_argument('--batch_size', type=int, default=30)
     parser.add_argument('--train_num', type=int, default=-1, help="The number of training data, -1 means all data")
     parser.add_argument('--dev_num', type=int, default=-1, help="The number of development data, -1 means all data")
     parser.add_argument('--test_num', type=int, default=-1, help="The number of development data, -1 means all data")
 
 
-    parser.add_argument('--train_file', type=str, default="/home/smetase/Projects/Deductive-MWP/data/task_dataset/math23k_trainset.json")
-    parser.add_argument('--dev_file', type=str, default="/home/smetase/Projects/Deductive-MWP/data/task_dataset/math23k_valset.json")
-    parser.add_argument('--test_file', type=str, default="/home/smetase/Projects/Deductive-MWP/data/task_dataset/math23k_test.json")
+    parser.add_argument('--train_file', type=str, default="/home/smetase/Projects/Deductive-MWP-R/data/task_dataset/math23k_trainset.json")
+    parser.add_argument('--dev_file', type=str, default="/home/smetase/Projects/Deductive-MWP-R/data/task_dataset/math23k_valset.json")
+    parser.add_argument('--test_file', type=str, default="/home/smetase/Projects/Deductive-MWP-R/data/task_dataset/math23k_test.json")
     # parser.add_argument('--train_file', type=str, default="data/mawps-single/mawps_train_nodup.json")
     # parser.add_argument('--dev_file', type=str, default="data/mawps-single/mawps_test_nodup.json")
 
@@ -96,88 +96,6 @@ def parse_arguments(parser:argparse.ArgumentParser):
     return args
 
 
-def train(config: Config, train_dataloader: DataLoader, num_epochs: int,
-          bert_model_name: str, num_labels: int,
-          dev: torch.device, tokenizer: PreTrainedTokenizerFast, valid_dataloader: DataLoader = None, test_dataloader: DataLoader = None,
-          constant_values: List = None, res_file:str = None, error_file:str = None):
-
-    gradient_accumulation_steps = 1
-    t_total = int(len(train_dataloader) // gradient_accumulation_steps * num_epochs)
-
-    constant_num = len(constant_values) if constant_values else 0
-    MODEL_CLASS = class_name_2_model[bert_model_name]
-    model = MODEL_CLASS.from_pretrained(bert_model_name,
-                                           num_labels=num_labels,
-                                           height=config.height,
-                                           constant_num=constant_num,
-                                            var_update_mode=config.var_update_mode, return_dict=True).to(dev)
-
-    scaler = None
-    if config.fp16:
-        scaler = torch.cuda.amp.GradScaler(enabled=bool(config.fp16))
-
-    optimizer, scheduler = get_optimizers(config, model, t_total)
-    model.zero_grad()
-
-    best_val_acc_performance = -1
-    os.makedirs(f"model_files/{config.model_folder}", exist_ok=True)
-
-    for epoch in range(num_epochs):
-        total_loss = 0
-        model.train()
-        for iter, feature in tqdm(enumerate(train_dataloader, 1), desc="--training batch", total=len(train_dataloader)):
-            optimizer.zero_grad()
-            with torch.cuda.amp.autocast(enabled=bool(config.fp16)):
-                loss = model(input_ids=feature.input_ids.to(dev), attention_mask=feature.attention_mask.to(dev),
-                             token_type_ids=feature.token_type_ids.to(dev),
-                             variable_indexs_start=feature.variable_indexs_start.to(dev),
-                             variable_indexs_end=feature.variable_indexs_end.to(dev),
-                             num_variables = feature.num_variables.to(dev),
-                             variable_index_mask= feature.variable_index_mask.to(dev),
-                             labels=feature.labels.to(dev), label_height_mask= feature.label_height_mask.to(dev),
-                             return_dict=True).loss
-            if config.fp16:
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-            else:
-                loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
-            total_loss += loss.item()
-            if config.fp16:
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                optimizer.step()
-            scheduler.step()
-            model.zero_grad()
-            if iter % 1000 == 0:
-                logger.info(f"epoch: {epoch}, iteration: {iter}, current mean loss: {total_loss/iter:.2f}")
-        logger.info(f"Finish epoch: {epoch}, loss: {total_loss:.2f}, mean loss: {total_loss/len(train_dataloader):.2f}")
-        if valid_dataloader is not None:
-            equ_acc, val_acc_performance = evaluate(valid_dataloader, model, dev, uni_labels=config.uni_labels, fp16=bool(config.fp16), constant_values=constant_values)
-            test_equ_acc, test_val_acc = -1, -1
-            if test_dataloader is not None:
-                test_equ_acc, test_val_acc = evaluate(test_dataloader, model, dev, uni_labels=config.uni_labels, fp16=bool(config.fp16), constant_values=constant_values,
-                         res_file=res_file, err_file=error_file)
-            if val_acc_performance > best_val_acc_performance:
-                logger.info(f"[Model Info] Saving the best model with best valid val acc {val_acc_performance:.6f} at epoch {epoch} ("
-                            f"valid_equ: {equ_acc:.6f}, valid_val: {val_acc_performance:.6f}"
-                             f" test_equ: {test_equ_acc:.6f}, test_val: {test_val_acc:.6f}"
-                            f")")
-                best_val_acc_performance = val_acc_performance
-                model_to_save = model.module if hasattr(model, "module") else model
-                model_to_save.save_pretrained(f"model_files/{config.model_folder}")
-                tokenizer.save_pretrained(f"model_files/{config.model_folder}")
-    logger.info(f"[Model Info] Best validation performance: {best_val_acc_performance}")
-    model = MODEL_CLASS.from_pretrained(f"model_files/{config.model_folder}",
-                                           num_labels=num_labels,
-                                           height=config.height,
-                                           constant_num=constant_num, var_update_mode=config.var_update_mode).to(dev)
-    if config.fp16:
-        model.half()
-        model.save_pretrained(f"model_files/{config.model_folder}")
-        tokenizer.save_pretrained(f"model_files/{config.model_folder}")
-    return model
 
 def get_batched_prediction_consider_multiple_m0(feature, all_logits: torch.FloatTensor, constant_num: int):
     batch_size, max_num_variable = feature.variable_indexs_start.size()
@@ -243,58 +161,19 @@ def evaluate(valid_dataloader: DataLoader, model: nn.Module, dev: torch.device, 
 
                 predictions.extend(batched_prediction)
 
-    corr = 0
-    num_label_step_corr = Counter()
-    num_label_step_total = Counter()
-    insts = valid_dataloader.dataset.insts
-    number_instances_remove = valid_dataloader.dataset.number_instances_remove
-    for inst_predictions, inst_labels in zip(predictions, labels):
-        num_label_step_total[len(inst_labels)] += 1
-        if len(inst_predictions) != len(inst_labels):
-            continue
-        is_correct = True
-        for prediction_step, label_step in zip(inst_predictions, inst_labels):
-            if prediction_step != label_step:
-                is_correct = False
-                break
-        if is_correct:
-            num_label_step_corr[len(inst_labels)] += 1
-            corr += 1
-    total = len(labels)
-    adjusted_total = total + number_instances_remove
-    acc = corr*1.0/adjusted_total
-    logger.info(f"[Info] Equation accuracy: {acc*100:.2f}%, total: {total}, corr: {corr}, adjusted_total: {adjusted_total}")
-
-    ##value accuarcy
-    val_corr = 0
-    num_label_step_val_corr = Counter()
-    err = []
-    corr = 0
-    for inst_predictions, inst_labels, inst in zip(predictions, labels, insts):
-        num_list = inst["num_list"]
-        is_value_corr, predict_value, gold_value, pred_ground_equation, gold_ground_equation = is_value_correct(inst_predictions, inst_labels, num_list, num_constant=constant_num, uni_labels=uni_labels, constant_values=constant_values)
-        val_corr += 1 if is_value_corr else 0
-        if is_value_corr:
-            num_label_step_val_corr[len(inst_labels)] += 1
-            corr += 1
-        else:
-            err.append(inst)
-        inst["predict_value"] = predict_value
-        inst["gold_value"] = gold_value
-        inst['pred_ground_equation'] = pred_ground_equation
-        inst['gold_ground_equation'] = gold_ground_equation
-    val_acc = val_corr * 1.0 / adjusted_total
-    logger.info(f"[Info] Value accuracy: {val_acc * 100:.2f}%, total: {total}, corr: {val_corr}, adjusted_total: {adjusted_total}")
-    for key in num_label_step_total:
-        curr_corr = num_label_step_corr[key]
-        curr_val_corr = num_label_step_val_corr[key]
-        curr_total = num_label_step_total[key]
-        logger.info(f"[Info] step num: {key} Acc.:{curr_corr*1.0/curr_total * 100:.2f} ({curr_corr}/{curr_total}) val acc: {curr_val_corr*1.0/curr_total * 100:.2f} ({curr_val_corr}/{curr_total})")
-    if res_file is not None:
-        write_data(file=res_file, data=insts)
-    if err_file is not None:
-        write_data(file=err_file, data=err)
-    return acc, val_acc
+    
+        total = 1200
+        insts = valid_dataloader.dataset.insts
+        ##value accuarcy
+        val_corr = 0
+        num_label_step_val_corr = Counter()
+        ret = []
+        corr = 0
+        for inst_predictions, inst in zip(predictions, insts):
+            num_list = inst["num_list"]
+            pred_val, _ = compute_value_for_incremental_equations(inst_predictions, num_list, constant_num, uni_labels, constant_values)
+            ret.append(pred_val)
+        return ret
 
 def main():
     parser = argparse.ArgumentParser(description="classificaton")
@@ -318,31 +197,6 @@ def main():
         num_labels = len(conf.uni_labels)
         constant_values = [1.0, 3.14]
         constant_number = len(constant_values)
-    elif "svamp" in conf.train_file:
-        constants = ['1.0', '0.1', '3.0', '5.0', '0.5', '12.0', '4.0', '60.0', '25.0', '0.01', '0.05', '2.0',
-                     '10.0', '0.25', '8.0', '7.0', '100.0']
-        constant2id = {c: idx for idx, c in enumerate(constants)}
-        constant_values = [float(c) for c in constants]
-        constant_number = len(constant_values)
-    elif "mawps" in conf.train_file:
-        constants = ['12.0', '1.0', '7.0', '60.0', '2.0', '5.0', '100.0', '8.0', '0.1', '0.5', '0.01', '25.0', '4.0', '3.0', '0.25']
-        if conf.train_file.split(".")[-2][-1] in ["0", "1", "2", "3", "4", "5"]:  ## 5 fold trainning
-            constants += ['10.0', '0.05']
-        constant2id = {c: idx for idx, c in enumerate(constants)}
-        constant_values = [float(c) for c in constants]
-        constant_number = len(constant_values)
-    elif "MathQA" in conf.train_file:
-        constants = ['100.0', '1.0', '2.0', '3.0', '4.0', '10.0', '1000.0', '60.0', '0.5', '3600.0', '12.0', '0.2778', '3.1416', '3.6', '0.25', '5.0', '6.0', '360.0', '52.0', '180.0']
-        conf.uni_labels = conf.uni_labels + ['^', '^_rev']
-        num_labels = len(conf.uni_labels)
-        constant2id = {c: idx for idx, c in enumerate(constants)}
-        constant_values = [float(c) for c in constants]
-        constant_number = len(constant_values)
-    else:
-        constant2id = None
-        constant_values = None
-        constant_number = 0
-    logger.info(f"[Data Info] constant info: {constant2id}")
 
 
     # Read dataset
@@ -401,10 +255,9 @@ def main():
         os.makedirs("results", exist_ok=True)
         res_file= f"results/{conf.model_folder}.res.json"
         err_file = f"results/{conf.model_folder}.err.json"
-        evaluate(valid_dataloader, model, conf.device, uni_labels=conf.uni_labels, fp16=bool(conf.fp16), constant_values=constant_values,
+        ret = evaluate(valid_dataloader, model, conf.device, uni_labels=conf.uni_labels, fp16=bool(conf.fp16), constant_values=constant_values,
                  res_file=res_file, err_file=err_file)
 
 if __name__ == "__main__":
     # logger.addHandler(logging.StreamHandler())
     main()
-

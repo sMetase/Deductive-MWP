@@ -33,7 +33,7 @@ def compute_value_for_incremental_equations(equations, num_list, num_constant, u
     store_values = []
     grounded_equations = []
     for eq_idx, equation in enumerate(equations):
-        left_var_idx, right_var_idx, op_idx, _ = equation
+        left_var_idx, right_var_idx, op_idx, _, = equation
         assert left_var_idx >= 0
         assert right_var_idx >= 0
         if left_var_idx >= eq_idx and left_var_idx < eq_idx + num_constant:  ## means
