@@ -1,7 +1,7 @@
 from src.data.universal_dataset import UniversalDataset
 from src.config import Config
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer, PreTrainedTokenizerFast, AutoModel
+from transformers import PreTrainedTokenizerFast
 from tqdm import tqdm
 import argparse
 from src.utils import get_optimizers, write_data
@@ -16,6 +16,8 @@ from src.eval.utils import compute_value_for_incremental_equations, compute
 from typing import List, Tuple
 import logging
 from transformers import set_seed
+from universal_main import parse_arguments, class_name_2_model
+import csv
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -27,74 +29,6 @@ logging.basicConfig(
 
 
 model_path = "/home/smetase/test/math23k"
-
-
-class_name_2_model = {
-        "bert-base-cased": UniversalModel,
-        "roberta-base": UniversalModel_Roberta,
-        "roberta-large": UniversalModel_Roberta,
-        "coref-roberta-base": UniversalModel_Roberta,
-        "bert-base-multilingual-cased": UniversalModel,
-        'bert-base-chinese': UniversalModel,
-        "xlm-roberta-base": UniversalModel_Roberta,
-        'hfl/chinese-bert-wwm-ext': UniversalModel,
-        'hfl/chinese-roberta-wwm-ext': UniversalModel,
-    }
-
-def parse_arguments(parser:argparse.ArgumentParser):
-    # data Hyperparameters
-    parser.add_argument('--device', type=str, default="cuda:0", choices=['cpu', 'cuda:0', 'cuda:1', 'cuda:2', 'cuda:3', 'cuda:4', 'cuda:5', 'cuda:6', 'cuda:7'], help="GPU/CPU devices")
-    parser.add_argument('--batch_size', type=int, default=30)
-    parser.add_argument('--train_num', type=int, default=-1, help="The number of training data, -1 means all data")
-    parser.add_argument('--dev_num', type=int, default=-1, help="The number of development data, -1 means all data")
-    parser.add_argument('--test_num', type=int, default=-1, help="The number of development data, -1 means all data")
-
-
-    parser.add_argument('--train_file', type=str, default="/home/smetase/Projects/Deductive-MWP-R/data/task_dataset/math23k_trainset.json")
-    parser.add_argument('--dev_file', type=str, default="/home/smetase/Projects/Deductive-MWP-R/data/task_dataset/math23k_valset.json")
-    parser.add_argument('--test_file', type=str, default="/home/smetase/Projects/Deductive-MWP-R/data/task_dataset/math23k_test.json")
-    # parser.add_argument('--train_file', type=str, default="data/mawps-single/mawps_train_nodup.json")
-    # parser.add_argument('--dev_file', type=str, default="data/mawps-single/mawps_test_nodup.json")
-
-    parser.add_argument('--train_filtered_steps', default=None, nargs='+', help="some heights to filter")
-    parser.add_argument('--test_filtered_steps', default=None, nargs='+', help="some heights to filter")
-
-    # model
-    parser.add_argument('--seed', type=int, default=42, help="random seed")
-    parser.add_argument('--model_folder', type=str, default="math_solver", help="the name of the models, to save the model")
-    parser.add_argument('--bert_folder', type=str, default="", help="The folder name that contains the BERT model")
-    parser.add_argument('--bert_model_name', type=str, default="hfl/chinese-bert-wwm-ext",
-                        help="The bert model name to used")
-    # parser.add_argument('--bert_folder', type=str, default="", help="The folder name that contains the BERT model")
-    # parser.add_argument('--bert_model_name', type=str, default="roberta-base",
-    #                     help="The bert model name to used")
-    parser.add_argument('--height', type=int, default=10, help="the model height")
-    parser.add_argument('--train_max_height', type=int, default=100, help="the maximum height for training data")
-
-    parser.add_argument('--var_update_mode', type=str, default="gru", help="variable update mode")
-
-    # training
-    parser.add_argument('--mode', type=str, default="test", choices=["train", "test"], help="learning rate of the AdamW optimizer")
-    parser.add_argument('--learning_rate', type=float, default=2e-5, help="learning rate of the AdamW optimizer")
-    parser.add_argument('--max_grad_norm', type=float, default=1.0, help="The maximum gradient norm")
-    parser.add_argument('--num_epochs', type=int, default=20, help="The number of epochs to run")
-    parser.add_argument('--fp16', type=int, default=0, choices=[0,1], help="using fp16 to train the model")
-
-    parser.add_argument('--parallel', type=int, default=0, choices=[0,1], help="parallelizing model")
-
-    # testing a pretrained model
-    parser.add_argument('--cut_off', type=float, default=-100, help="cut off probability that we don't want to answer")
-    parser.add_argument('--print_error', type=int, default=0, choices=[0, 1], help="whether to print the errors")
-    parser.add_argument('--error_file', type=str, default="results/error.json", help="The file to print the errors")
-    parser.add_argument('--result_file', type=str, default="results/res.json",
-                        help="The file to print the errors")
-
-    args = parser.parse_args()
-    # Print out the arguments
-    for k in args.__dict__:
-        logger.info(f"{k} = {args.__dict__[k]}")
-    return args
-
 
 
 def get_batched_prediction_consider_multiple_m0(feature, all_logits: torch.FloatTensor, constant_num: int):
@@ -129,9 +63,10 @@ def get_batched_prediction_consider_multiple_m0(feature, all_logits: torch.Float
 
 def evaluate(valid_dataloader: DataLoader, model: nn.Module, dev: torch.device, fp16:bool, constant_values: List, uni_labels:List,
              res_file: str= None, err_file:str = None) -> Tuple[float, float]:
+
     model.eval()
     predictions = []
-    labels = []
+
     constant_num = len(constant_values) if constant_values else 0
     with torch.no_grad():
         for index, feature in tqdm(enumerate(valid_dataloader), desc="--validation", total=len(valid_dataloader)):
@@ -152,37 +87,26 @@ def evaluate(valid_dataloader: DataLoader, model: nn.Module, dev: torch.device, 
                             batched_prediction[b] = batched_prediction[b][:(p+1)]
                             break
 
-                # for b, inst_labels in enumerate(batched_labels):
-                #     for p, label_step in enumerate(inst_labels):
-                #         left, right, op_id, stop_id = label_step
-                #         if stop_id == 1:
-                #             batched_labels[b] = batched_labels[b][:(p+1)]
-                #             break
-
                 predictions.extend(batched_prediction)
-
     
-        total = 1200
+        total = len(predictions)
         insts = valid_dataloader.dataset.insts
-        ##value accuarcy
-        val_corr = 0
-        num_label_step_val_corr = Counter()
-        ret = []
-        corr = 0
+
+        answers = []
         for inst_predictions, inst in zip(predictions, insts):
             num_list = inst["num_list"]
-            pred_val, _ = compute_value_for_incremental_equations(inst_predictions, num_list, constant_num, uni_labels, constant_values)
-            ret.append(pred_val)
-        return ret
+            id = inst["id"]
+            pred_val, incremental_equations = compute_value_for_incremental_equations(inst_predictions, num_list, constant_num, uni_labels, constant_values)
+            answers.append(pred_val)
+        return answers
 
 def main():
     parser = argparse.ArgumentParser(description="classificaton")
     opt = parse_arguments(parser)
     set_seed(opt.seed)
     conf = Config(opt)
-    os.makedirs("results", exist_ok=True)
-    bert_model_name = conf.bert_model_name if conf.bert_folder == "" or conf.bert_folder=="none" else f"{conf.bert_folder}/{conf.bert_model_name}"
 
+    bert_model_name = conf.bert_model_name if conf.bert_folder == "" or conf.bert_folder=="none" else f"{conf.bert_folder}/{conf.bert_model_name}"
     tokenizer = AutoTokenizer.from_pretrained(bert_model_name, use_fast=True)
 
 
@@ -191,73 +115,27 @@ def main():
     ]
     num_labels = 6
     conf.uni_labels = uni_labels
-    if "23k" in conf.train_file:
-        constant2id = {"1": 0, "PI": 1}
-        conf.uni_labels = conf.uni_labels + ['^', '^_rev']
-        num_labels = len(conf.uni_labels)
-        constant_values = [1.0, 3.14]
-        constant_number = len(constant_values)
+    constant2id = {"1": 0, "PI": 1}
+    conf.uni_labels = conf.uni_labels + ['^', '^_rev']
+    num_labels = len(conf.uni_labels)
+    constant_values = [1.0, 3.14]
+    constant_number = len(constant_values)
 
+    logger.info("Initializing model.")
+    model = UniversalModel.from_pretrained(model_path,
+                                            num_labels=num_labels,
+                                            height = conf.height,
+                                            constant_num = constant_number,
+                                        var_update_mode=conf.var_update_mode).to(conf.device)
 
-    # Read dataset
-    if opt.mode == "train":
-        logger.info("[Data Info] Reading training data")
-        dataset = UniversalDataset(file=conf.train_file, tokenizer=tokenizer, uni_labels=conf.uni_labels, number=conf.train_num, filtered_steps=opt.train_filtered_steps,
-                                   constant2id=constant2id, constant_values=constant_values,
-                                   data_max_height=opt.train_max_height, pretrained_model_name=bert_model_name)
-        logger.info("[Data Info] Reading validation data")
-        eval_dataset = UniversalDataset(file=conf.dev_file, tokenizer=tokenizer, uni_labels=conf.uni_labels, number=conf.dev_num, filtered_steps=opt.test_filtered_steps,
-                                        constant2id=constant2id, constant_values=constant_values,
-                                        data_max_height=conf.height, pretrained_model_name=bert_model_name)
+    logger.info("Reading questions")
+    questions = UniversalDataset(file=conf.test_file, tokenizer=tokenizer, uni_labels=conf.uni_labels, number=conf.dev_num, filtered_steps=opt.test_filtered_steps,
+                                    constant2id=constant2id, constant_values=constant_values, data_max_height=conf.height, pretrained_model_name=bert_model_name)
+    questions_dataloader = DataLoader(questions, batch_size=conf.batch_size, shuffle=False, num_workers=0,
+                                  collate_fn=questions.collate_function)
 
-        logger.info("[Data Info] Reading Testing data data")
-        test_dataset = None
-        if os.path.exists(conf.test_file):
-            test_dataset = UniversalDataset(file=conf.test_file, tokenizer=tokenizer, uni_labels=conf.uni_labels,
-                                            number=conf.dev_num, filtered_steps=opt.test_filtered_steps,
-                                            constant2id=constant2id, constant_values=constant_values,
-                                            data_max_height=conf.height, pretrained_model_name=bert_model_name)
-        logger.info(f"[Data Info] Training instances: {len(dataset)}, Validation instances: {len(eval_dataset)}")
-        if test_dataset is not None:
-            logger.info(f"[Data Info] Testing instances: {len(test_dataset)}")
-        # Prepare data loader
-        logger.info("[Data Info] Loading data")
-        train_dataloader = DataLoader(dataset, batch_size=conf.batch_size, shuffle=True, num_workers=conf.num_workers, collate_fn=dataset.collate_function)
-        valid_dataloader = DataLoader(eval_dataset, batch_size=conf.batch_size, shuffle=False, num_workers=conf.num_workers, collate_fn=eval_dataset.collate_function)
-        test_loader = None
-        if test_dataset is not None:
-            logger.info("[Data Info] Loading Test data")
-            test_loader = DataLoader(test_dataset, batch_size=conf.batch_size, shuffle=False, num_workers=conf.num_workers, collate_fn=eval_dataset.collate_function)
-
-        res_file = f"results/{conf.model_folder}.res.json"
-        err_file = f"results/{conf.model_folder}.err.json"
-        # Train the model
-        model = train(conf, train_dataloader,
-                      num_epochs= conf.num_epochs,
-                      bert_model_name = bert_model_name,
-                      valid_dataloader = valid_dataloader, test_dataloader=test_loader,
-                      dev=conf.device, tokenizer=tokenizer, num_labels=num_labels,
-                      constant_values=constant_values, res_file=res_file, error_file=err_file)
-        evaluate(valid_dataloader, model, conf.device, fp16=bool(conf.fp16), constant_values=constant_values, uni_labels=conf.uni_labels)
-    else:
-        logger.info(f"Testing the model now.")
-        MODEL_CLASS = class_name_2_model[bert_model_name]
-        model = MODEL_CLASS.from_pretrained(model_path,
-                                               num_labels=num_labels,
-                                               height = conf.height,
-                                               constant_num = constant_number,
-                                            var_update_mode=conf.var_update_mode).to(conf.device)
-        logger.info("[Data Info] Reading test data")
-        eval_dataset = UniversalDataset(file=conf.test_file, tokenizer=tokenizer, uni_labels=conf.uni_labels, number=conf.dev_num, filtered_steps=opt.test_filtered_steps,
-                                        constant2id=constant2id, constant_values=constant_values, data_max_height=conf.height, pretrained_model_name=bert_model_name)
-        valid_dataloader = DataLoader(eval_dataset, batch_size=conf.batch_size, shuffle=False, num_workers=0,
-                                      collate_fn=eval_dataset.collate_function)
-        os.makedirs("results", exist_ok=True)
-        res_file= f"results/{conf.model_folder}.res.json"
-        err_file = f"results/{conf.model_folder}.err.json"
-        ret = evaluate(valid_dataloader, model, conf.device, uni_labels=conf.uni_labels, fp16=bool(conf.fp16), constant_values=constant_values,
-                 res_file=res_file, err_file=err_file)
+    answers = evaluate(questions_dataloader, model, conf.device, uni_labels=conf.uni_labels, fp16=bool(conf.fp16), constant_values=constant_values,
+                    res_file=res_file, err_file=err_file)
 
 if __name__ == "__main__":
-    # logger.addHandler(logging.StreamHandler())
     main()
