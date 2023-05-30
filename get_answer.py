@@ -1,7 +1,7 @@
 from src.data.universal_dataset import UniversalDataset
 from src.config import Config
 from torch.utils.data import DataLoader
-from transformers import PreTrainedTokenizerFast
+from transformers import AutoTokenizer, PreTrainedTokenizerFast
 from tqdm import tqdm
 import argparse
 from src.utils import get_optimizers, write_data
@@ -10,14 +10,15 @@ import torch.nn as nn
 import numpy as np
 import os
 import random
-from src.model.universal_model import UniversalModel, UniversalModel_Roberta
+from src.model.universal_model import UniversalModel
 from collections import Counter
-from src.eval.utils import compute_value_for_incremental_equations, compute
+from src.eval.utils import *
 from typing import List, Tuple
 import logging
 from transformers import set_seed
 from universal_main import parse_arguments, class_name_2_model
 import csv
+import json
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -26,9 +27,6 @@ logging.basicConfig(
 	datefmt="%m/%d/%Y %H:%M:%S",
 	level=logging.INFO,
 )
-
-
-model_path = "/home/smetase/test/math23k"
 
 
 def get_batched_prediction_consider_multiple_m0(feature, all_logits: torch.FloatTensor, constant_num: int):
@@ -61,11 +59,13 @@ def get_batched_prediction_consider_multiple_m0(feature, all_logits: torch.Float
     return batched_prediction
 
 
-def evaluate(valid_dataloader: DataLoader, model: nn.Module, dev: torch.device, fp16:bool, constant_values: List, uni_labels:List,
-             res_file: str= None, err_file:str = None) -> Tuple[float, float]:
+def get_ans(valid_dataloader: DataLoader, model: nn.Module, dev: torch.device, fp16:bool, constant_values: List, uni_labels:List,
+             res_file: str= None, err_file:str = None) -> float:
 
     model.eval()
     predictions = []
+    answers = []
+    answers.append(['id', 'prediction'])
 
     constant_num = len(constant_values) if constant_values else 0
     with torch.no_grad():
@@ -92,13 +92,17 @@ def evaluate(valid_dataloader: DataLoader, model: nn.Module, dev: torch.device, 
         total = len(predictions)
         insts = valid_dataloader.dataset.insts
 
-        answers = []
         for inst_predictions, inst in zip(predictions, insts):
+            
             num_list = inst["num_list"]
-            id = inst["id"]
+            _id = inst["id"]
             pred_val, incremental_equations = compute_value_for_incremental_equations(inst_predictions, num_list, constant_num, uni_labels, constant_values)
-            answers.append(pred_val)
+            answers.append([f'{_id}', f'{pred_val}'])
+
         return answers
+
+
+
 
 def main():
     parser = argparse.ArgumentParser(description="classificaton")
@@ -106,7 +110,7 @@ def main():
     set_seed(opt.seed)
     conf = Config(opt)
 
-    bert_model_name = conf.bert_model_name if conf.bert_folder == "" or conf.bert_folder=="none" else f"{conf.bert_folder}/{conf.bert_model_name}"
+    bert_model_name = "hfl/chinese-bert-wwm-ext"
     tokenizer = AutoTokenizer.from_pretrained(bert_model_name, use_fast=True)
 
 
@@ -134,8 +138,12 @@ def main():
     questions_dataloader = DataLoader(questions, batch_size=conf.batch_size, shuffle=False, num_workers=0,
                                   collate_fn=questions.collate_function)
 
-    answers = evaluate(questions_dataloader, model, conf.device, uni_labels=conf.uni_labels, fp16=bool(conf.fp16), constant_values=constant_values,
-                    res_file=res_file, err_file=err_file)
+    res = get_ans(questions_dataloader, model, conf.device, uni_labels=conf.uni_labels, fp16=bool(conf.fp16), constant_values=constant_values
+                        )
+
+    with open('data/submission.csv', 'w', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerows(res)
 
 if __name__ == "__main__":
     main()

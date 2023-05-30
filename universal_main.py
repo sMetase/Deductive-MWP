@@ -39,18 +39,16 @@ class_name_2_model = {
 
 def parse_arguments(parser:argparse.ArgumentParser):
     # data Hyperparameters
-    parser.add_argument('--device', type=str, default="cpu", choices=['cpu', 'cuda:0', 'cuda:1', 'cuda:2', 'cuda:3', 'cuda:4', 'cuda:5', 'cuda:6', 'cuda:7'], help="GPU/CPU devices")
+    parser.add_argument('--device', type=str, default="cuda", choices=['cpu', 'cuda:0', 'cuda:1', 'cuda:2', 'cuda:3', 'cuda:4', 'cuda:5', 'cuda:6', 'cuda:7'], help="GPU/CPU devices")
     parser.add_argument('--batch_size', type=int, default=30)
     parser.add_argument('--train_num', type=int, default=-1, help="The number of training data, -1 means all data")
     parser.add_argument('--dev_num', type=int, default=-1, help="The number of development data, -1 means all data")
     parser.add_argument('--test_num', type=int, default=-1, help="The number of development data, -1 means all data")
 
 
-    parser.add_argument('--train_file', type=str, default="data/math23k/train23k_processed_nodup.json")
-    parser.add_argument('--dev_file', type=str, default="data/math23k/valid23k_processed_nodup.json")
-    parser.add_argument('--test_file', type=str, default="data/math23k/test23k_processed_nodup.json")
-    # parser.add_argument('--train_file', type=str, default="data/mawps-single/mawps_train_nodup.json")
-    # parser.add_argument('--dev_file', type=str, default="data/mawps-single/mawps_test_nodup.json")
+    parser.add_argument('--train_file', type=str, default="data/task_dataset/math23k_trainset.json")
+    parser.add_argument('--dev_file', type=str, default="data/task_dataset/math23k_valset.json")
+    parser.add_argument('--test_file', type=str, default="data/task_dataset/math23k_test.json")
 
     parser.add_argument('--train_filtered_steps', default=None, nargs='+', help="some heights to filter")
     parser.add_argument('--test_filtered_steps', default=None, nargs='+', help="some heights to filter")

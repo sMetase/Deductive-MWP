@@ -60,10 +60,41 @@ def compute_value_for_incremental_equations(equations, num_list, num_constant, u
         store_values.append(current_value)
     return current_value, grounded_equations
 
-def is_value_correct(predictions, labels, num_list, num_constant, uni_labels, constant_values: List[float] = None, consider_multiple_m0=False, use_parallel_equations: bool = False):
-    pred_val, pred_grounded_equations = compute_value_for_incremental_equations(predictions, num_list, num_constant, uni_labels, constant_values)
-    gold_val, gold_grounded_equations = compute_value_for_incremental_equations(labels, num_list, num_constant, uni_labels,  constant_values)
-    if math.fabs((gold_val- pred_val)) < 1e-4:
-        return True, pred_val, gold_val, pred_grounded_equations, gold_grounded_equations
+def is_value_correct(predictions, labels):
+    if math.fabs((predictions - labels)) < 1e-4:
+        return True
     else:
-        return False, pred_val, gold_val, pred_grounded_equations, gold_grounded_equations
+        return False
+
+
+def str2float(v):
+
+    if not isinstance(v,str):
+        return v
+    else:
+        if '%' in v: # match %
+            v=v[:-1]
+            return float(v)/100
+        if '(' in v:
+            try:
+                return eval(v) # match fraction
+            except:
+                if re.match('^\d+\(',v): # match fraction like '5(3/4)'
+                    idx = v.index('(')
+                    a = v[:idx]
+                    b = v[idx:]
+                    return eval(a)+eval(b)
+                if re.match('.*\)\d+$',v): # match fraction like '(3/4)5'
+                    l=len(v)
+                    temp_v=v[::-1]
+                    idx = temp_v.index(')')
+                    a = v[:l-idx]
+                    b = v[l-idx:]
+                    return eval(a)+eval(b)
+            return float(v)
+        elif '/' in v: # match number like 3/4
+            return eval(v)
+        else:
+            if v == '<UNK>':
+                return float('inf')
+            return float(v)

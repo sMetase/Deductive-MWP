@@ -84,20 +84,17 @@ class UniversalDataset(Dataset):
             for k in range(ord('a'), ord('a') + 26):
                 mapped_text = mapped_text.replace(f"temp_{chr(k)}", " <quant> ")
             ## obtain the text string
-            if "math23k" in file:
-                mapped_text = mapped_text.split()
-                input_text = ""
-                for idx, word in enumerate(mapped_text):
-                    if word.strip() == "<quant>":
-                        input_text += " <quant> "
-                    elif word == "," or word == "，":
-                        input_text += word + " "
-                    else:
-                        input_text += word
-            elif "MathQA" in file or "mawps" in file or "svamp" in file:
-                input_text = ' '.join(mapped_text.split())
-            else:
-                raise NotImplementedError("The file type is not supported")
+            
+            mapped_text = mapped_text.split()
+            input_text = ""
+            for idx, word in enumerate(mapped_text):
+                if word.strip() == "<quant>":
+                    input_text += " <quant> "
+                elif word == "," or word == "，":
+                    input_text += word + " "
+                else:
+                    input_text += word
+
             res = tokenizer.encode_plus(" " + input_text, add_special_tokens=True, return_attention_mask=True)
             input_ids = res["input_ids"]
             attention_mask = res["attention_mask"]
@@ -120,31 +117,7 @@ class UniversalDataset(Dataset):
                 obj['type_str'] = "no detected variable"
                 continue
             var_mask = [1] * num_variable
-            # if len(obj["equation_layer"])  == 0:
-            #     filter_type_count["empty equation in the data"]  += 1
-            #     obj['type_str'] = "empty eqution"
-            #     continue
-
-
-            # diff = res - float(obj["answer"])
-            # try:
-            #     if float(obj["answer"]) > 1000000:
-            #         assert math.fabs(diff) < 200
-            #     else:
-            #         assert math.fabs(diff) < 1
-            # except:
-            #     # traceback.print_exc()
-            #     obj['type_str'] = "illegal"
-            #     if "test" in file or "valid" in file:
-            #         filter_type_count[f"answer not equal"] += 1
-            #         continue
-            #     else:
-            #         if "MathQA" in file:
-            #             filter_type_count[f"answer not equal"] += 1
-            #             continue
-            #         else:
-            #             pass
-
+           
        
             var_num_all += len(obj["num_list"])
             var_num_count[len(obj["num_list"])] += 1

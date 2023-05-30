@@ -2,8 +2,6 @@
 replace_number.py
     replace numbers in text with temp_X
 
-sMetase
-
 '''
 
 text_key = "ori_text"
